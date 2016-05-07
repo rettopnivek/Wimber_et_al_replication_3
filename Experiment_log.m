@@ -38,6 +38,7 @@ prompt = {'Enter initials:','Enter any notes on the session:'};
 dlg_title = 'Experiment log';
 num_lines = [ 2 40 ];
 answer = inputdlg(prompt,dlg_title,num_lines);
+drawnow; pause(0.05);  % this innocent line prevents the Matlab hang
 
 % Write times as Year\Month\Day\Hour:Minute AM PM
 hr = [ startTime(4) endTime(4) ];
