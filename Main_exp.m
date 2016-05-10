@@ -631,6 +631,7 @@ end;
 % Additional variable declarations for the conditional statements
 st_trials = 1;
 end_trials = (nAssoc-nBaseline)*4;
+expCond = 5;
 
 instruct = [ 'Stage 4: Creating visual images from words\n\n' ...
              'Because this experiment concerns the effect of visual \n' ...
