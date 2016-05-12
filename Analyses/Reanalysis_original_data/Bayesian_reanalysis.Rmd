@@ -5,23 +5,25 @@ date: "May 9, 2016"
 output: html_document
 ---
 
-Here I reanalysis the final recognition test from the behavioral data of Wimber et al. (2015) using a generalized linear model, the goal being to use the posteriors subsequently as priors for the replication.
+Here I reanalysis the final recognition test from the behavioral data of Wimber et al. (2015) using a generalized linear model, the goal being to use the posteriors subsequently as priors for the replication. Furthermore, Nature Neuroscience defines successful replications as ones who fall within the 95% confidence intervals of the original data. We will try to do the same using the credible intervals instead.
 
-```{r}
+```{r,results='hide',warning=FALSE}
 # We'll use Stan to fit a generalized linear model
 library( rstanarm )
 options (mc.cores=parallel::detectCores ()) # Run on multiple cores
-
-# Load in data
-load( 'Original_Rec_Mem_data.RData' )
-
-# Determine the sample size
-N = length( unique( OriginalRecMem$Subject ) )
 
 # Define a basic logistic (or sigmoidal) function
 logistic = function(x) 1/(1+exp(-x))
 # Define a basic logit function
 logit = function(p) log( p/(1-p) )
+```
+
+```{r}
+# Load in data
+load( 'Original_Rec_Mem_data.RData' )
+
+# Determine the sample size
+N = length( unique( OriginalRecMem$Subject ) )
 ```
 
 The dependent variable of interest is accuracy (coded as 0 for wrong and 1 for correct), which we assume follows a Bernoulli distribution. The group-level factors we'll examine across the models are:
@@ -48,6 +50,7 @@ d$RIF = 0; d$RIF[ d$IT == 2 & d$SR == 1 ] = 1
 ```
 
 We'll need to specify priors for the model. Specifically, we'll specify the intercept as a Normal( 1.775, .3 ). As for the coefficient representing the RIF effect, we'll specify a Normal( -.3, .3 ) prior. Given that a large number of studies report a RIF effect, this prior should reflect the average researcher's belief that the effect is present. A prior predictive check can tell us the range of responses the model predicts using these priors.
+
 ```{r}
 # Fit a model conditioned on the priors instead of the outcomes
 fit = stan_glmer(cbind(Y, Trial) ~ RIF + (1|S) + (1|I), data = d, family = binomial("logit"), prior_intercept = normal(1.775,.3), prior = normal( -.3, .3 ), prior_PD = TRUE,chains = 4, cores = 4, seed = 7453)
@@ -55,7 +58,9 @@ fit = stan_glmer(cbind(Y, Trial) ~ RIF + (1|S) + (1|I), data = d, family = binom
 # Simulate data from the priors
 nd = d; nd$Y = 0;
 Sim = posterior_predict( fit, newdata = nd )
+```
 
+```{r,echo=FALSE}
 # Calculate avg. accuracy over conditions of interest
 tmp = apply( Sim, 1, function(x) 
 	aggregate( x, list( nd$IT, nd$SR ), mean )$x )
@@ -83,6 +88,7 @@ post = as.matrix( fit )
 ```
 
 The resulting posteriors suggest that the posterior probability for the RIF effect is essentially guaranteed to be negative (i.e. 100% of credible mass is less than 0 ).
+
 ```{r,echo=FALSE}
 violinPlot = function( x, pos, crit = NULL, scaleH = .5, type = 'greater', ... ) {
   den = density( x )
@@ -125,6 +131,11 @@ legend( 'topleft', paste( 'P( Theta < 0 ) = ', round(postProb,2) ),
 
 ```
 
+```{r}
+# Credible intervals
+print( round( quantile( post[,2], c( .025, .975 ) ), 2 ) )
+```
+
 To examine how well the model performs, we can examine how well it retrodicts the data to which the model was fitted.
 
 ```{r,echo=FALSE}
@@ -159,7 +170,7 @@ tmp = apply( Sim, 1, function(x)
 obs = aggregate( d$Y, list( d$IT, d$SR, d$S ), mean )
 
 cond = cbind( c(1,2,1,2), c(0,0,1,1) )
-ttl = c('T-BS','C-BS','T-SR','C-SR')
+ttl = paste( 'Subject-level:', c('T-BS','C-BS','T-SR','C-SR') )
 for (i in 1:4) {
   sel = obs[,1] == cond[i,1] & obs[,2] == cond[i,2]
   tmp2 = apply( tmp[sel,], 1, quantile, prob = c(.025,.25,.5,.75,.975) )

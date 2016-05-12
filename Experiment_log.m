@@ -28,7 +28,7 @@ orig_dir = cd('Subjects');
 if exist('Experiment_log.csv', 'file') ~= 2
     % If it doesn't, create it
     fid = fopen('Experiment_log.csv', 'wt'); % Open for writing
-    string = 'Output,RNG-number,Start-time,End-time,Initials,Notes\n';
+    string = 'Output,RNG-number,Start-time,End-time,Initials,Notes,Visualization\n';
     fprintf(fid,string);
     fclose(fid);
 end
@@ -77,7 +77,7 @@ edTime = [ num2str(endTime(1)) '\' num2str(endTime(2)) '\' ...
 fid = fopen('Experiment_log.csv', 'at'); % Open for writing
 string = [ csvOutputFile{1} '-' matOutputFile{1} ',' ...
     num2str(RNG_seeds(SubjNum)) ',' stTime ',' edTime ',' answer{1} ...
-    ',' answer{2} char(10) ];
+    ',' answer{2} char(10) ',' num2str(mcResp) ];
 fprintf(fid, '%s', string);
 fclose(fid);
 
