@@ -8,6 +8,9 @@ output: html_document
 Here I reanalysis the final recognition test from the behavioral data of Wimber et al. (2015) using a generalized linear model, the goal being to use the posteriors subsequently as priors for the replication. Furthermore, Nature Neuroscience defines successful replications as ones who fall within the 95% confidence intervals of the original data. We will try to do the same using the credible intervals instead.
 
 ```{r,results='hide',warning=FALSE}
+# Clear the workspace
+rm(list=ls())
+
 # We'll use Stan to fit a generalized linear model
 library( rstanarm )
 options (mc.cores=parallel::detectCores ()) # Run on multiple cores
@@ -20,7 +23,8 @@ logit = function(p) log( p/(1-p) )
 
 ```{r}
 # Load in data
-load( 'Original_Rec_Mem_data.RData' )
+load( 'Original_all_data.RData' )
+OriginalRecMem = OriginalAllData[ OriginalAllData$Cond == 6, ]
 
 # Determine the sample size
 N = length( unique( OriginalRecMem$Subject ) )
@@ -48,6 +52,58 @@ However, the predicted effect is that there should be no difference between base
 ```{r}
 d$RIF = 0; d$RIF[ d$IT == 2 & d$SR == 1 ] = 1
 ```
+
+```{r}
+sel = OriginalAllData$Cond == 2 | OriginalAllData$Cond == 3 | OriginalAllData$Cond == 4
+dT = OriginalAllData[ sel, ]
+
+tmp = aggregate( dT$Accuracy, list( dT$ImageNum, dT$Subject ), 
+                 function(x) { 
+                   out = sum(x);
+                   if (length(x)==1) out=out-.5;
+                   if (length(x)==2) out=out-1;
+                 return( out ) }  )
+
+cv = numeric( nrow( tmp ) )
+for ( n in 1:N ) {
+  sel = d$Subject == n
+  img = d$ImageNum[sel]
+  ord = order( img )
+  cv[sel][ord] = tmp$x[sel]
+}
+d$PT = cv # Save covariate for practice performance
+
+# Clean up workspace
+rm( sel, img, ord, n, tmp, cv, dT )
+
+sel = OriginalAllData$Cond == 5
+dSR = OriginalAllData[ sel, ]
+
+imgTar = floor( dSR$ImageNum )
+imgCom = round( (dSR$ImageNum - imgTar)*1000 )
+Targets = floor( dSR$Category )
+Competitors = round( (dSR$Category - Targets)*10 )
+tmp = aggregate( dSR$Response==Targets, list( imgTar, dSR$Subject ), 
+                 mean  )
+tmp2 = aggregate( dSR$Response==Competitors, list( imgCom, dSR$Subject ), 
+                 mean  )
+
+cv = numeric( nrow( tmp ) )
+for ( n in 1:N ) {
+  sel = d$Subject == n
+  img = d$ImageNum[sel]
+  ord = order( img )
+  cv[sel][ord] = tmp$x[sel]
+}
+d$PT = cv # Save covariate for practice performance
+
+# Clean up workspace
+rm( sel, img, ord, n, tmp, cv, dT )
+
+# Remove NAs
+d = na.omit( d )
+```
+
 
 We'll need to specify priors for the model. Specifically, we'll specify the intercept as a Normal( 1.775, .3 ). As for the coefficient representing the RIF effect, we'll specify a Normal( -.3, .3 ) prior. Given that a large number of studies report a RIF effect, this prior should reflect the average researcher's belief that the effect is present. A prior predictive check can tell us the range of responses the model predicts using these priors.
 
@@ -81,7 +137,7 @@ With these priors, the model predicts an average accuracy of 80% across subjects
 
 ```{r}
 # Fit the model to the original data
-fit = stan_glmer(cbind(Y, Trial) ~ RIF + (1|S) + (1|I), data = d, family = binomial("logit"), prior_intercept = normal(1.775,.3), prior = normal( -.3, .3 ), chains = 8, cores = 8, seed = 2834,iter=1250,warmup=500)
+fit = stan_glmer(cbind(Y, Trial) ~ RIF + PT + (1|S) + (1|I), data = d, family = binomial("logit"), prior_intercept = normal(1.775,.3), prior = normal( c(-.3,0), c(.3,.3) ), chains = 8, cores = 8, seed = 3872,iter=1250,warmup=500)
 
 # Extract the posterior estimates
 post = as.matrix( fit )
@@ -115,7 +171,7 @@ violinPlot = function( x, pos, crit = NULL, scaleH = .5, type = 'greater', ... )
   return( PostProb )
 }
 
-layout( cbind( 1, 2 ) )
+layout( cbind( 1, 2, 3 ) )
 plot( c(0,1), c(1.2,2.4), type = 'n',
       xaxt = 'n', xlab = 'Intercept', ylab = ' ', bty = 'n' )
 violinPlot( post[,1], .5, scaleH = .4 )
@@ -127,6 +183,15 @@ postProb = violinPlot( post[,2], .5, scaleH = .4, crit = 0, type = "less",
                        border = NA, col = 'grey' )
 violinPlot( post[,2], .5, scaleH = .4 )
 legend( 'topleft', paste( 'P( Theta < 0 ) = ', round(postProb,2) ),
+        bty = 'n' )
+
+plot( c(0,1), c(-.2,.8), type = 'n',
+      xaxt = 'n',  xlab = 'Previous practice', ylab = ' ', bty = 'n' )
+abline( h = 0, lty = 2 )
+postProb = violinPlot( post[,3], .5, scaleH = .4, crit = 0, 
+                       type = "greater", border = NA, col = 'grey' )
+violinPlot( post[,3], .5, scaleH = .4 )
+legend( 'topleft', paste( 'P( Theta > 0 ) = ', round(postProb,2) ),
         bty = 'n' )
 
 ```
@@ -141,7 +206,7 @@ To examine how well the model performs, we can examine how well it retrodicts th
 ```{r,echo=FALSE}
 
 # Simulate data from the posterior estimates
-nd = d; nd$Y = 0;
+nd = d[,c('Y','I','S','IT','SR','RIF','PT','Trial')]; nd$Y = 0;
 Sim = posterior_predict( fit, newdata = nd )
 
 ### Group-level performance ###

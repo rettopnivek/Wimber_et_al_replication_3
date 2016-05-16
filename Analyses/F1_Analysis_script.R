@@ -1,7 +1,7 @@
 #---------------------------------#
 # Analysis script for replication #
 # Kevin Potter                    #
-# Updated 05/10/2016              #
+# Updated 05/16/2016              #
 #---------------------------------#
 
 # Clear workspace
@@ -90,7 +90,29 @@ violinPlot = function( x, pos, crit = NULL, scaleH = .5,
   return( PostProb )
 }
 
-runCode = c( T, T, F, F )
+subj_ind_create = function(dat) {
+  # Purpose:
+  # Creates a new index for subjects that 
+  # starts at 1 and increases in sequential order
+  # Arguments:
+  # dat - A data frame with a variable 'Subject'
+  # Returns:
+  # A vector with the new subject indices
+  
+  Orig_val = unique(dat$Subject)
+  L = length(dat$Subject)
+  S = length(Orig_val)
+  Subjects = numeric(L)
+  inc = 1
+  for (s in Orig_val) {
+    Subjects[ dat$Subject==s ] = inc
+    inc = inc + 1
+  }
+  
+  Subjects
+}
+
+runCode = c( F, F, F, T )
 
 #---------------------------#
 # Initial training accuracy #
@@ -241,7 +263,22 @@ if (runCode[2]) {
   # Report run time
   runTime = Sys.time() - startTime
   print( runTime )
-  rm( startTime )
+  rm( runTime, startTime )
+  
+  # Proportions from original study
+  orig_prop = c(.747, .091, .025, .137)
+  comp_vals = reverseSoftmax( orig_prop, restrict = c( F, F, F, T ) )$par[1:3]
+  # Extract credible intervals
+  ci = HDInterval::hdi( post$mu_beta )
+  print( paste( 'P(Target) from Wimber et al. > Posterior: ',
+    round( sum( comp_vals[1] > post$mu_beta[,1] )/nrow( post$mu_beta ), 3 ),
+    sep = '' ) )
+  print( paste( 'P(Competitor) from Wimber et al. > Posterior: ',
+                round( sum( comp_vals[2] > post$mu_beta[,2] )/nrow( post$mu_beta ), 3 ),
+                sep = '' ) )
+  print( paste( 'P(Error) from Wimber et al. > Posterior: ',
+                round( sum( comp_vals[3] > post$mu_beta[,3] )/nrow( post$mu_beta ), 3 ),
+                sep = '' ) )
   
   # Return to current directory
   setwd(orig_dir)
@@ -264,7 +301,7 @@ if (runCode[3]) {
   d$S = as.factor( d$S )
   d$N = Total$x
   
-  # Fit the model to the original data
+  # Fit the model, collapsing over responses to give targets vs. all others
   fit = stan_glmer(cbind(Y, N) ~ R + (1|S), 
                    data = d, family = binomial("logit"), 
                    prior_intercept = normal(1.39,.3), 
@@ -277,10 +314,13 @@ if (runCode[3]) {
   
   x11()
   layout( cbind( 1, 2 ) )
-  plot( c(0,1), c(-.5,.5), type = 'n' )
+  plot( c(0,1), c(-.5,.5), type = 'n', xlab = 'Slope for linear trend',
+        main = 'Targets vs. others', bty = 'l', ylab = 'Posterior values' )
   violinPlot( post[,2], pos = .5, scaleH = .4, crit = 0,
               border = NA, col = 'grey' )
   violinPlot( post[,2], pos = .5, scaleH = .4 )
+  legend( 'topright', paste( 'P(Posterior > 0) =', round( mean( post[,2] > 0 ), 3 ) ),
+          bty = 'n' )
   
   # For targets...
   # Create data frame
@@ -289,7 +329,7 @@ if (runCode[3]) {
   d$S = as.factor( d$S )
   d$N = Total$x
   
-  # Fit the model to the original data
+  # Fit the model, collapsing over responses to give intrusions vs. all others
   fit = stan_glmer(cbind(Y, N) ~ R + (1|S), 
                    data = d, family = binomial("logit"), 
                    prior_intercept = normal(1.39,.3), 
@@ -300,10 +340,14 @@ if (runCode[3]) {
   # Extract the posterior estimates
   post = as.matrix( fit )
   
-  plot( c(0,1), c(-.5,.5), type = 'n' )
+  plot( c(0,1), c(-.5,.5), type = 'n', xlab = 'Slope for linear trend',
+        main = 'Intrusions vs. others', bty = 'l', ylab = 'Posterior values' )
   violinPlot( post[,2], pos = .5, scaleH = .4, crit = 0,
               border = NA, col = 'grey' )
   violinPlot( post[,2], pos = .5, scaleH = .4 )
+  legend( 'topright', paste( 'P(Posterior > 0) =', round( mean( post[,2] > 0 ), 3 ) ),
+          bty = 'n' )
+  
 }
 
 #------------------------#
@@ -336,8 +380,20 @@ if (runCode[4]) {
   # Extract the posterior estimates
   post = as.matrix( fit )
   
+  # Check to see if posterior mean falls within the credible interval 
+  # from the previous study
+  print( paste( 'Successful replication:', mean( post[,2] ) < -.11 ) )
+  x11()
+  plot( c(0,1), c(-1,1), type = 'n', xlab = 'Estimate for RIF effect',
+        main = ' ', bty = 'l', ylab = 'Posterior values' )
+  violinPlot( post[,2], pos = .5, scaleH = .4, crit = -.11,
+              border = NA, col = 'grey' )
+  violinPlot( post[,2], pos = .5, scaleH = .4 )
+  legend( 'topright', paste( 'P(Posterior > -.11) =', round( mean( post[,2] > -.11 ), 3 ) ),
+          bty = 'n' )
+  
   # Simulate data from the posterior estimates
-  nd = d; nd$Y = 0;
+  nd = d[,c('Y','Trial','RIF','S','I','IT','SR')]; nd$Y = 0;
   Sim = posterior_predict( fit, newdata = nd )
   
   ### Group-level performance ###
@@ -361,3 +417,5 @@ if (runCode[4]) {
   points( 1:4, obs, pch = 19, col = 'blue' )
   
 }
+
+setwd( orig_dir )

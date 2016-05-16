@@ -58,7 +58,7 @@ Lookup - 10:  End of experiment
 % Lookup - 01
 
 % Set debug state (0 = normal subject, >= 1 for debugging )
-debug = 1;
+debug = 0;
 % Set the parameters to simulate responses in the debugging state
 robotParFam = [ .95, 1, 1 ]; % Familiarization phase
 robotParTest = [ .8, 1, 1 ]; % Training - test phase

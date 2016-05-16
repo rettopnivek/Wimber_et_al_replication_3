@@ -120,7 +120,7 @@ We'll use that as our upper bound for the power analyses, since effect sizes are
 ```{r}
 # Loop through some possible combinations
 RIF_effect = seq( -.29, 0, length = 5 )
-Samp_size = c( 24, 48, 54, 60, 72 )
+Samp_size = c( 24, 48, 60 )
 ```
 
 Simulating data using the RIF model and refitting the model to the simulations generates the following power-curves for sample sizes of 24, 48, 54, 60, and 72 subjects:
@@ -217,10 +217,34 @@ axis( 1, 1:5, paste( 100*round( logit(1.74) - logit( 1.74 + RIF_effect ), 2 ),
                   '%',sep=''), tick = F )
 abline( h = c(.8,.5,.05), col='grey' )
 
-pts = c( 4, 8, 9, 17, 19 )
+pts = c( 8, 17, 19 )
 for (j in 1:nrow(power)) {
   lines( 1:ncol(power), power[j,] )
   points( 1:ncol(power), power[j,], pch = pts[j] )
+}
+
+legend( 'topright', paste( 'N =', Samp_size ), pch = pts,
+        bty = 'n' )
+
+```
+
+Note that the predicted power can vary between approximately +/- 2% since I only use 1000 repetitions.
+
+```{r, echo=FALSE}
+
+load('SuccRep_1000_rep.RData') # Load in previously calculated values
+
+plot( 1:ncol(repMat), repMat[1,], ylim = c(0,1), 
+			type='n', xaxt = 'n', bty = 'l', 
+			xlab = 'RIF effect', ylab = 'Power' )
+axis( 1, 1:5, paste( 100*round( logit(1.74) - logit( 1.74 + RIF_effect ), 2 ),
+                  '%',sep=''), tick = F )
+abline( h = c(.8,.5,.05), col='grey' )
+
+pts = c( 8, 17, 19 )
+for (j in 1:nrow(repMat)) {
+  lines( 1:ncol(repMat), repMat[j,] )
+  points( 1:ncol(repMat), repMat[j,], pch = pts[j] )
 }
 
 legend( 'topright', paste( 'N =', Samp_size ), pch = pts,
