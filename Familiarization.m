@@ -87,7 +87,7 @@ for trl = st_trials:end_trials
     % Determine if person is familiar with image
     % Here 1 = Yes, 2 = No (i.e. left is yes, right is no)
     if debug == 0
-        [ RT, resp ] = getResponseMultiple( binaryKeys, 1:2, FamTimeOut );
+        [ RT, resp ] = getResponseMultiple( keyOptions(1:2), 1:2, FamTimeOut );
     else
         [ RT, resp ] = Robot( 1, 1, robotParFam );
     end
