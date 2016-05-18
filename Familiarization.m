@@ -80,6 +80,7 @@ for trl = st_trials:end_trials
     
     % Draw the image to the screen to the center of the screen
     Screen('DrawTexture', window, imageTexture, [], imrect, 0);
+    DrawFormattedText(window,'Recognize?','center',center(2)+200,[],[],[],[],[],[],[]);
     
     % Flip to the screen (i.e. display stimuli)
     Screen('Flip', window);

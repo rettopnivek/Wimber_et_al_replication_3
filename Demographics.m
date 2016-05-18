@@ -114,9 +114,10 @@ num_lines = 1;
 Choices = inputdlg(stringPrompt,' ',num_lines);
 
 % Save output
-if ( isempty(sel) )
+if ( isempty(Choices) )
     output{4} = 'Age, Rather not say';
 else
+    
     output{4} = [ 'Age, ' Choices{1} ];
 end
 drawnow; pause(0.05);  % this innocent line prevents the Matlab hang
