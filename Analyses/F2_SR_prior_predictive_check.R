@@ -1,80 +1,69 @@
-#
-#
-#
+#----------------------------------------#
+# Prior predictive check for selective   #
+# retrieval task analysis                #
+# Kevin Potter                           #
+# Updated 02/07/2017                     #
+#----------------------------------------#
 
-# Prior predictive check for selective retrieval task
+# Clear workspace
+rm( list = ls() )
+
+# Save current directory
+orig_dir = getwd()
+
+# Index
+# Lookup - 01:  Load in useful packages
+# Lookup - 02:  Define inputs for prior predictive check
+# Lookup - 03:  Sample from priors using Stan
+# Lookup - 04:  Plot results
+
+###
+### Load in useful packages
+###
+# Lookup - 01
+
+# For geting github packages
+# install.packages(devtools)
+# library(devtools)
+
+# Miscellanous functions for modeling/plotting
+# install_github("rettopnivek/utilityf")
+library(utilityf)
+
+# Load in package for Bayesian estimation
+library(rstan)
+# For parallel processing
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+###
+### Define inputs for prior predictive check
+###
+# Lookup - 02
+
+# Set working directory to location of Stan scripts
 setwd('Stan_scripts')
 
-model_script = "
-data {
-  int<lower=1> No; // Total number of observations
-  int<lower=1> Ns; // Total number of subjects
-  int<lower=2> K; // Number of response categories
-  int indS[No]; // Subject index per trial
-  matrix[K-1,4] Priors; // Matrix of parameter values for priors
-}
-model {
-}
-generated quantities {
-  // Variable declarations
-  matrix[ Ns, K-1 ] beta_raw; // Subject-level coefficients
-  real mu_beta[K-1]; // Group-level means
-  real<lower=0> sigma_beta[K-1]; // Group-level standard deviations
-  matrix[ Ns, K ] beta; // Coefficients for all categories
-  int<lower=1,upper=K> Y[No]; // Simulated responses
-  int Targets;
-  int Competitors;
-  int Errors;
-  int Unknown;
-  vector[Ns] zeros;
-  
-  // Generate parameters from priors
-  
-  for (i in 1:(K-1)) {
-    mu_beta[i] <- normal_rng( Priors[i,1], Priors[i,2] );
-    sigma_beta[i] <- gamma_rng( Priors[i,3], Priors[i,4] );
-  }
-  
-  // Hierarchy
-  for (i in 1:3) {
-    for (ns in 1:Ns) {
-      beta_raw[ns,i] <- normal_rng( mu_beta[i], sigma_beta[i] );
-    }
-  }
-  zeros <- rep_vector(0, Ns);
-  beta <- append_col( beta_raw, zeros );
-  
-  // Simulate observations
-  Targets <- 0;
-  Competitors <- 0;
-  Errors <- 0;
-  Unknown <- 0;
-  for ( no in 1:No ) {
-    Y[no] <- categorical_rng( softmax( to_vector( beta[ indS[no] ] ) ) );
-    # Category frequencies
-    if ( Y[no] == 1 ) Targets <- Targets + 1;
-    if ( Y[no] == 2 ) Competitors <- Competitors + 1;
-    if ( Y[no] == 3 ) Errors <- Errors + 1;
-    if ( Y[no] == 4 ) Unknown <- Unknown + 1;
-  }
-  
-}
-"
+Ns = 48 # Number of subjects
+No = 54*Ns # Number of observations
+indS = rep( 1:Ns, each = 54 ) # Index for subjects
 
-writeChar( model_script, "SR_prior_check.stan" )
-
-Ns = 48
-No = 54*Ns
-indS = rep( 1:Ns, each = 54 )
-
+# Determine means
 mu = reverseSoftmax( c( .747, .091, .025, .137 ), 
                      restrict = c( F, F, F, T ) )
 
+# Specify desired priors to test
 Priors = cbind( c( 1.700, -.409, -1.700 ),
                 c( .3, .3, .3 ),
                 c( 2, 2, 2 ),
                 c( 8, 8, 8 ) )
 
+###
+### Sample from priors using Stan
+###
+# Lookup - 03
+
+# List of input for Stan
 stan_dat = list(
   No = No,
   Ns = Ns,
@@ -82,36 +71,56 @@ stan_dat = list(
   Priors = Priors
 )
 
-niter = 1250
-chains = 8
+niter = 1250 # Number of samples to draw
+chains = 8 # Number of chains to run in parallel
 
-fit = stan(
-  file = 'SR_prior_check.stan',
-  data = stan_dat,
-  iter = niter,
-  chains = chains,
-  algorithm = 'Fixed_param'
-)
+startTime = Sys.time() # To assess run-time
 
-post = extract( fit )
+# Compile model
+sm = stan_model(stanc_ret = stanc_builder("SR_prior_check.stan"))
 
-x11();
+# Draw samples
+fit = sampling( sm, data = stan_dat, 
+                iter = niter, 
+                chains = chains,
+                seed = 74893, # For reproducibility
+                algorithm = "Fixed_param" )
+
+post = extract(fit)
+runTime = Sys.time() - startTime # To assess run-time
+print( runTime )
+
+###
+### Plot results
+###
+# Lookup - 04
+
+setwd( orig_dir )
+setwd( 'Plots' )
+
+pdf( 'Prior_predictive_check_SR.pdf', width = 12 )
+
 layout( cbind( c(1,3),c(2,4) ) )
 hist( post$Targets/No, col = 'grey', border = 'white',
-      bty = 'l', xlab = 'P(Target)', freq = T )
+      bty = 'l', xlab = 'P(Target)', freq = T,
+      main = 'Prior distribution over targets' )
 legend('topright', as.character( round( mean( post$Targets/No ), 2 ) ), 
        bty = 'n' )
 hist( post$Competitors/No, col = 'grey', border = 'white',
-      bty = 'l', xlab = 'P(Competitors)', freq = T )
+      bty = 'l', xlab = 'P(Competitors)', freq = T,
+      main = 'Prior distribution over competitors' )
 legend('topright', as.character( round( mean( post$Competitors/No ), 2 ) ), 
        bty = 'n' )
 hist( post$Errors/No, col = 'grey', border = 'white',
-      bty = 'l', xlab = 'P(Errors)', freq = T )
+      bty = 'l', xlab = 'P(Errors)', freq = T,
+      main = 'Prior distribution over errors' )
 legend('topright', as.character( round( mean( post$Errors/No ), 2 ) ), 
        bty = 'n' )
 hist( post$Unknown/No, col = 'grey', border = 'white',
-      bty = 'l', xlab = 'P(Unknown)', freq = T )
+      bty = 'l', xlab = 'P(Unknown)', freq = T,
+      main = 'Prior distribution over unknowns' )
 legend('topright', as.character( round( mean( post$Unknown/No ), 2 ) ), 
        bty = 'n' )
+dev.off()
 
 setwd( orig_dir )
