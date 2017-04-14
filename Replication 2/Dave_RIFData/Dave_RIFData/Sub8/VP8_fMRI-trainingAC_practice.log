@@ -1,0 +1,24 @@
+Scenario - 
+Logfile written - 02/12/2013 17:15:38
+
+Subject	Trial	Event Type	Code	Time	TTime	Uncertainty	Duration	Uncertainty	ReqTime	ReqDur
+
+VP8_fMRI	1	Picture	studyInstr	-9866	0	1	33854	2	0	targ resp
+VP8_fMRI	1	Response	33	23860	33726	1
+VP8_fMRI	2	Picture	fix	24122	0	1	4531	3	0	4500
+VP8_fMRI	3	Picture	filler	28787	0	1	39587	2	0	39500
+VP8_fMRI	4	Picture	fix	68507	0	2	4532	3	0	4500
+VP8_fMRI	5	Picture	filler	73172	0	1	39587	2	0	39500
+VP8_fMRI	6	Picture	fix	112893	0	1	4531	3	0	4500
+VP8_fMRI	7	Picture	filler	117558	0	1	39587	2	0	39500
+VP8_fMRI	8	Picture	testInstr	157278	0	2	15595	3	0	targ resp
+VP8_fMRI	8	Response	33	172819	15541	1
+VP8_fMRI	9	Picture	fix	173006	0	2	4532	3	0	4500
+VP8_fMRI	10	Picture	filler	207795	30123	1	12663	2	30000	resp
+VP8_fMRI	10	Response	11	220338	42666	2
+VP8_fMRI	11	Picture	fix	235653	0	1	4531	3	0	4500
+VP8_fMRI	12	Picture	filler	270441	30123	1	11863	2	30000	resp
+VP8_fMRI	12	Response	22	282258	41940	1
+VP8_fMRI	13	Picture	fix	297499	0	2	4532	3	0	4500
+VP8_fMRI	14	Picture	filler	332288	30124	1	14795	2	30000	resp
+VP8_fMRI	14	Response	11	346977	44813	2
