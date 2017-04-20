@@ -12,13 +12,16 @@ parameters{
   real<lower=0> sigma_beta[K-1]; // Group-level standard deviations
 }
 transformed parameters {
-  vector[Ns] zeros;
   matrix[ Ns, K ] beta; // Coefficients for all categories
   simplex[ K ] theta[ Ns ]; // Category probabilities
   
-  zeros = rep_vector(0, Ns);
-  beta = append_col( beta_raw, zeros ); // Fix 'unknown' category to 0
-  for (ns in 1:Ns ) theta[ ns ] = softmax( to_vector( beta[ ns ] ) );
+  // Declare a local block
+  {
+    vector[Ns] zeros;
+    zeros = rep_vector(0, Ns);
+    beta = append_col( beta_raw, zeros ); // Fix 'unknown' category to 0
+    for (ns in 1:Ns ) theta[ ns ] = softmax( to_vector( beta[ ns ] ) );
+  }
 }
 model {
   
@@ -27,7 +30,7 @@ model {
   sigma_beta ~ gamma( col( Priors, 3 ), col( Priors, 4 ) );
   
   // Hierarchy
-  for (i in 1:3) {
+  for ( i in 1:(K-1) ) {
     col( beta_raw, i ) ~ normal( mu_beta[i], sigma_beta[i] );
   }
   

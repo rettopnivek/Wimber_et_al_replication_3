@@ -1,0 +1,618 @@
+---
+title: "Power Analysis for replication"
+author: "Kevin Potter"
+date: "May 3, 2016"
+output: html_document
+---
+
+## Introduction
+
+This is a record of a power analysis for a third replication attempt on the Wimber et al. (2015) study on cortical suppression as an explanation of retrieval induced forgetting.
+
+## Load in useful packages and data
+
+```{r,message=FALSE,warning=FALSE}
+# Clear workspace
+rm(list = ls())
+
+# Define some useful functions
+source('F0_Useful_functions.R')
+
+# Package for fitting generalized linear models with mixed effects
+# install.packages( 'lme4' )
+library( lme4 )
+
+# Package for C++ to R interface (Needs RTools or equivalent)
+# install.packages( 'Rcpp' )
+library( Rcpp )
+
+# Load in original data
+load( 'Data/Original_all_data.RData' )
+```
+
+## Define dependent and independent variables
+
+```{r, echo=FALSE}
+# For easy manipulation
+od = OriginalAllData
+colnames( od ) = c( 'S', 'Tr', 'Ph', 'IN', 'Co', 
+                    'Ch', 'RT', 'Ac', 'IT', 'B', 
+                    'Bl', 'Cat', 'CR', 'fName' )
+
+N = 24 # Number of subjects
+
+# Define dummy-coded variable for selective-retrieval
+od$SR = 1 - od$B
+
+# Create index of missing responses
+od$MR = 0; od$MR[ is.na( od$RT ) ] = 1
+
+# Create dummy variables for each condition
+od$TSR = 0; od$TSR[ od$IT == 1 & od$SR == 1 ] = 1
+od$TB = 0; od$TB[ od$IT == 1 & od$SR == 0 ] = 1
+od$CSR = 0; od$CSR[ od$IT == 2 & od$SR == 1 ] = 1
+od$CB = 0; od$CB[ od$IT == 2 & od$SR == 0 ] = 1
+
+# Create index for levels of conditions
+od$Cnd = 1; od$Cnd[ od$TB == 1 ] = 2;
+od$Cnd[ od$TSR == 1 ] = 3; od$Cnd[ od$CSR == 1 ] = 4;
+
+# Effects coding
+od$ITef = -1; od$ITef[ od$IT == 1 ] = 1;
+od$SRef = -1; od$SRef[ od$B == 0 ] = 1
+od$ITxSR = od$ITef * od$SRef
+
+# Define variable representing intercept
+od$Int = 1
+
+# Extract performance for final recognition memory test
+fr = od[ od$Ph == 6, ]
+
+# Isolate variables of interest
+dtbf = fr[, c('S','IN','Ac','Int','ITef','SRef','ITxSR',
+              'TSR','TB','CSR','CB','Cnd','MR') ]
+
+# Trim out missing data
+dtbf = dtbf[ dtbf$MR == 0, ]
+```
+
+## Estimates from original study
+
+First, we'll fit the original data kindly provided by Maria Wimber.
+
+```{r}
+str( dtbf ) # Structure of data to be fitted
+
+# S is an index for subjects
+# IN is an index for items
+# Ac is the accuracy ( 0 = wrong, 1 = right )
+# Int is an intercept
+# ITef is an effects coded variable ( -1 = baseline, +1 = selective retrieval )
+# SRef is an effects coded variable ( -1 = Targets, +1 = Competitors )
+# ITxSR is the interaction for the two above variables
+# TSR is a dummy coded variable for the targets in the selective retrieval phase
+# TB is a dummy coded variable for the targets in the baseline phase
+# CSR is a dummy coded variable for the competitors in the selective retrieval phase
+# CB is a dummy coded variable for the competitors in the baseline phase
+# Cnd is a variable numerically coding the unique combination of condition levels
+# MR is an indicator for missing responses
+```
+
+We'll use a generalized linear model in which the data follows a bernoulli distribution, and we'll include random effects for subjects and items. We'll fit a model that posits there is no effect for baseline conditions and for target images that underwent selective retrieval, but there is an effect for competitor images that underwent selective retrieval:
+
+```{r}
+RIF_model = glmer( Ac ~ 1 + CSR + (1|S) + (1|IN), data = dtbf, 
+                 family = binomial(link='logit') )
+```
+
+Examining the coefficients, the RIF model suggests that there is a drop of about 4% in the performance in recognition memory predicted in the population.
+
+```{r}
+RIF_results = summary( RIF_model )
+print( round( RIF_results$coefficients[2,], 3 ) )
+
+# Convert to percentage
+Intercept = RIF_results$coefficients[1,1]
+RIF = RIF_results$coefficients[2,1]
+print( round( 100*( logistic( Intercept ) - 
+                      logistic( Intercept + RIF ) ) ) )
+```
+
+## Power curves
+
+We'll use that as our upper bound for the power analyses, since effect sizes are typically over-estimated due to how the literature only publishes significant findings. We'll test results for 0% to 4% in approximately 1% increments.
+
+```{r}
+# Loop through some possible combinations
+RIF_effect = seq( -.29, 0, length = 5 )
+```
+
+Next, we'll define a general purpose function to simulate observations from a logistic regression model with subject and item effects in C++ (for speed):
+
+```{r}
+cpp_code = '
+NumericVector genLinModSim( Rcpp::List input ) {
+  /*
+  Purpose:
+  A function to simulate a hierarchical logistic regression 
+  model with random intercepts for subjects and items.
+  Arguments:
+  input - A list consisting of...
+          X         = A design matrix for the fixed effects
+          beta      = A column vector with the generating parameters
+                      for the fixed effects
+          Ns        = The number of subjects
+          subjIndex = An index indicating which observations belong 
+                      to which subjects
+          sigma_s   = The standard deviation for the subject random 
+                      intercepts
+          Ni        = The number of items
+          itemIndex = An index indicating which observations belong 
+                      to which items
+          sigma_i   = The standard deviation for the item random 
+                      intercepts
+  Returns:
+  A vector of binary responses.
+  */
+  
+  // Extract design matrix
+  arma::mat X = input[ "X" ];
+
+  // Number of observations to simulate
+  int Nt = X.n_rows;
+  
+  // Extract generating parameters
+  
+  // Fixed effects
+  arma::mat beta = input[ "beta" ];
+  arma::mat mu = X * beta;
+  
+  // Initialize variable for indexing random effects
+  int ind;
+  
+  // Random intercept for subjects
+  int Ns = input[ "Ns" ];
+  if ( Ns > 0 ) {
+    
+    // Extract index for subjects
+    IntegerVector subjIndex = input[ "subjIndex" ];
+    
+    // Generate random intercept for every subject
+    double sigma_s = input[ "sigma_s" ];
+    NumericVector eta = rnorm( Ns, 0.0, sigma_s );
+    
+    for ( int i = 0; i < Nt; i++ ) {
+      ind = subjIndex( i ) - 1;
+      if ( ind > -1 ) mu( i, 0 ) = mu( i, 0 ) + eta( ind );
+    }
+  }
+
+  // Random intercept for items
+  int Ni = input[ "Ni" ];
+  if ( Ni > 0 ) {
+    
+    // Extract index for items
+    IntegerVector itemIndex = input[ "itemIndex" ];
+    
+    // Generate random intercept for every item
+    double sigma_i = input[ "sigma_i" ];
+    NumericVector zeta = rnorm( Ni, 0.0, sigma_i );
+    
+    for ( int i = 0; i < Nt; i++ ) {
+      ind = itemIndex( i ) - 1;
+      if ( ind > -1 ) mu( i, 0 ) = mu( i, 0 ) + zeta( ind );
+    }
+  }
+
+  // Initialize output
+  NumericVector out( Nt );
+  for ( int i = 0; i < Nt; i++ ) {
+    out( i ) = R::rbinom( 1, 1.0/( 1.0 + exp( -mu( i ) ) ) );
+  }
+  
+  return( out );
+}
+'
+
+cppFunction( cpp_code, depends = 'RcppArmadillo' )
+
+# Clean up workspace
+rm( cpp_code )
+```
+
+We will also specify the variables needed to represent the experimental design:
+
+```{r}
+# Sample size
+Ns = c( 24, 48 )
+
+# Number of trials per condition
+Nt = c(
+  18, # Baseline (Competitors)
+  18, # Baseline (Targets)
+  54, # Selective retrieval (Targets)
+  54  # Selective retrieval (Competitors)
+)
+
+# Number of items
+Ni = sum( Nt )
+
+# Experimental conditions
+Associate = c(
+  rep(  0, Nt[1] ),
+  rep(  1, Nt[2] ),
+  rep(  1, Nt[3] ),
+  rep(  0, Nt[4] )
+)
+# (0 = competitor, 1 = target)
+
+Retrieval = c(
+  rep(  0, Nt[1] ),
+  rep(  0, Nt[2] ),
+  rep(  1, Nt[3] ),
+  rep(  1, Nt[4] )
+)
+# (0 = baseline, 1 = selective retrieval)
+
+# Dummy coded variable for simple effect of forgetting for competitors
+SEF = c(
+  rep(  0, Nt[1] ),
+  rep(  0, Nt[2] ),
+  rep(  0, Nt[3] ),
+  rep(  1, Nt[4] )
+)
+```
+
+The generating parameters for the intercept and standard deviations of the random intercepts will be based on the estimates from the original data:
+
+```{r}
+# Extract intercept
+Int = fixef( RIF_model )[1]
+
+# Extract standard deviations for subject and item effects
+sigma_i = as.numeric( attributes( VarCorr( RIF_model )$IN )$stddev )
+sigma_s = as.numeric( attributes( VarCorr( RIF_model )$S )$stddev )
+```
+
+We'll run 1,000 iterations, which results in about +/- 2% accuracy in the estimates.
+
+```{r}
+# Define number of iterations
+nRep = 1000
+```
+
+We'll loop over all sample sizes and effect sizes. Note that the computations are very slow (it takes about 5 hours to run the following code):
+```{r, eval=FALSE}
+# Initialize matrices to store results
+p_value_power_analysis = matrix( NA, length( Ns ), 
+                                 length( RIF_effect ) )
+MC_error = array( NA, dim = c( 2, length( Ns ),
+                               length( RIF_effect ) ) )
+                  
+# Define function to randomize item position
+f = function() {
+  return( sample( 1:( sum(Nt) ) ) )
+}
+
+# Define function to estimate Monte carlo error via 
+# a resampling method
+f2 = function(i) {
+  ind = 1:(dim( output )[2])
+  return( sum( output[5,sample(ind,replace=T),i] < .05 ) )
+}
+
+# Loop over sample sizes
+for ( s in 1:length( Ns ) ) {
+  
+  print( paste( 'Sample size:', Ns[s] ) )
+  
+  # Initialize variables
+  CSR = rep( SEF, Ns[s] ) # Simple effect for forgetting
+  IT = rep( Associate, Ns[s] )
+  SR = rep( Retrieval, Ns[s] )
+  # Index for subjects
+  S = rep( 1:Ns[s], each = sum(Nt) )
+  # Index for items
+  IN = as.vector( replicate( Ns[s], f() ) )
+  # Design matrix for fixed effects
+  X = cbind( 1, CSR )
+  
+  # Initialize array for output
+  output = array( NA, dim = c( ncol( X ) + 3, nRep, 
+                               length( RIF_effect ) ) )
+  
+  # Loop over effect sizes
+  for ( e in 1:length( RIF_effect ) ) {
+    
+    print( paste( 'Effect size:', e ) )
+    
+    # Define input for simulation function
+    input = list(
+      X = X,
+      Ns = Ns[s],
+      Ni = Ni, 
+      subjIndex = S,
+      itemIndex = IN,
+      beta = rbind( Int, RIF_effect[e] ),
+      sigma_s = sigma_s,
+      sigma_i = sigma_i
+    )
+    
+    # Loop over iterations
+    for ( nr in 1:nRep ) {
+      
+      if ( nr == 1 ) startTime = Sys.time()
+      
+      # Simulate data
+      sim = genLinModSim( input )
+      
+      # Parameter recovery
+      fit = glmer( sim ~ 1 + CSR + # Fixed effects
+                     (1|S) + (1|IN), # Random effects
+                   family = binomial('logit') )
+      fe = fixef( fit )
+      std = c(
+        as.numeric( attributes( VarCorr( fit )$IN )$stddev ),
+        as.numeric( attributes( VarCorr( fit )$S )$stddev )
+      )
+      
+      output[1,nr,e] = fe[1]
+      output[2,nr,e] = fe[2]
+      output[3,nr,e] = std[1]
+      output[4,nr,e] = std[2]
+      output[5,nr,e] = summary( fit )$coefficients[2,4]
+      
+      if ( nr == 1 ) {
+        runTime = Sys.time() - startTime
+        print( paste( 'Estimated run time:',
+                      round( (runTime * nRep)/60, 2 ),
+                      'minutes' ) )
+        # Clean up workspace
+        rm( startTime, runTime )
+      }
+      
+      # Clean up workspace
+      rm( sim, fit, fe, std )
+    }
+    
+    # Estimate MC error
+    MC_error[,s,e] = quick_ui( replicate( 10000, f2(e) )/nRep )
+  }
+  
+  # Monte carlo approximations for power
+  p_value_power_analysis[s,] = colSums( output[5,,] < .05 )/nRep
+  
+  # Clean up workspace
+  rm( output, grp_mns )
+}
+
+# Save the results for easy access
+save( p_value_power_analysis, 
+      ppc_power_analysis, 
+      MC_error, file = 'Data/power_analysis_1000.RData' )
+```
+
+```{r,echo=FALSE}
+load('Data/power_analysis_1000.RData')
+
+colnames( p_value_power_analysis ) = 
+  c('4%','3%','2%','1%','0%')
+rownames( p_value_power_analysis ) = 
+  c('N24','N48')
+```
+
+Simulating data using the RIF model and refitting the model to the simulations generates the following power-curves for sample sizes of 24 (the original study) and 48 (the proposed replication):
+
+```{r,echo=FALSE,fig.width=6,fig.height=6}
+blankPlot( c(.8,5.2), c(0,1) )
+abline(h=0,lwd=2)
+abline(v=.8,lwd=2)
+axis( 1, 1:5, c('4%','3%','2%','1%','0%'),
+      cex.axis = 1.5, tick = F, line = -.5 )
+axis( 2, seq(0,1,.2),
+      cex.axis = 1.5, tick = F, line = -.5 )
+for ( i in seq(.1,1,.1) )
+  segments( .8, i, 5.2, i, lwd = 2, lty = 2, col = 'grey80' )
+mtext( 'Power', side = 2, cex = 1.4, line = 2 )
+mtext( 'RIF effect size', side = 1, cex = 1.4, line = 2 )
+
+clr = c( 'red', 'black' )
+for ( s in 1:2 ) {
+  
+  for ( i in 1:5 ) {
+    arrows( i, MC_error[1,s,i],
+            i, MC_error[2,s,i],
+            code = 3, angle = 90, length = .05,
+            lwd = 2, col = clr[s] )
+  }
+  
+  lines( 1:5, p_value_power_analysis[s,],
+         col = clr[s], lwd = 2 )
+  points( 1:5, p_value_power_analysis[s,],
+          pch = 19, cex = 1.5, col = clr[s] )
+  
+}
+```
+
+Error bars represent 95% confidence intervals determined via the  resampling function. We can display a table of the precise amounts:
+```{r}
+p_value_power_analysis = 
+  as.data.frame( p_value_power_analysis )
+print( p_value_power_analysis )
+```
+
+As can be seen, with 48 subjects, we have an estimated power over 95% to detect an effect size of only 4% and we still have 90% power to detect an effect of 3% (the authors report an effect size of 7% in their paper).
+
+## Posterior predictive checks
+
+We also plan to conduct a posterior predictive check, examining whether the condition means for average performance from our replication fall within the 95% credible intervals from the original study.
+
+The 95% credible intervals will be based on Wimber et al.'s original data with missing responses recoded as errors:
+
+```{r}
+# Isolate variables of interest
+dtbf = fr[, c('S','IN','Ac','Int','ITef','SRef','ITxSR',
+              'TSR','TB','CSR','CB','Cnd','MR') ]
+
+# Set missing values to errors
+dtbf$Ac[ dtbf$MR == 1 ] = 0
+
+# Fit hierarchical logistic regression
+RIF_model = glmer( Ac ~ 1 + CSR + (1|S) + (1|IN), data = dtbf, 
+                 family = binomial(link='logit') )
+
+# Extract intercept
+Int = fixef( RIF_model )[1]
+
+# Extract standard deviations for subject and item effects
+sigma_i = as.numeric( attributes( VarCorr( RIF_model )$IN )$stddev )
+sigma_s = as.numeric( attributes( VarCorr( RIF_model )$S )$stddev )
+```
+
+Fitting the same hierarchical logistic regression model with mildly informative priors (a N(1.775, 0.3) on the intercept, and a N(-0.3, 0.3) on the coefficient for the simple effect of forgetting), we get the following posterior predictive intervals for each condition:
+
+```{r}
+post_pred_check = rbind(
+  LB = c( TB = 0.7569, CB = 0.7569, TSR = 0.7701, CSR = 0.7199 ),
+  UB = c( TB = 0.8356, CB = 0.8356, TSR = 0.8225, CSR = 0.7824 )
+)
+```
+
+We can simulate the model under different RIF effects and examine how often the observed data will fall outside the interval:
+
+```{r}
+# Matrix for output
+ppc_power_analysis = matrix( NA, 4, length( RIF_effect ) )
+# Matrix for MC error
+MC_error = array( NA, dim = c( 4, length( RIF_effect ), 2 ) )
+
+# Define function to randomize item position
+f = function() {
+  return( sample( 1:( sum(Nt) ) ) )
+}
+
+# Define function to estimate Monte carlo error via 
+# a resampling method
+f2 = function(i,e) {
+  ind = 1:(dim( grp_mns )[2])
+  out = sum( grp_mns[i,sample(ind,replace=T),e] > 
+            post_pred_check[1,i] & 
+        grp_mns[i,sample(ind,replace=T),e] < 
+            post_pred_check[2,i] )/nRep
+  return( out )
+}
+
+# Number of iterations to run
+nRep = 1000
+
+# Initialize array for group means
+grp_mns = array( NA, dim = c( 4, nRep, 
+                              length( RIF_effect ) ) )
+
+# Initialize variables
+CSR = rep( SEF, Ns[s] ) # Simple effect for forgetting
+IT = rep( Associate, Ns[2] )
+SR = rep( Retrieval, Ns[2] )
+# Index for subjects
+S = rep( 1:Ns[2], each = sum(Nt) )
+# Index for items
+IN = as.vector( replicate( Ns[2], f() ) )
+# Design matrix for fixed effects
+X = cbind( 1, CSR )
+
+# Loop over different effect sizes
+for ( e in 1:length( RIF_effect ) ) {
+  
+  print( paste( 'Effect size:', e ) )
+  
+  # Define input for simulation function
+  input = list(
+    X = X,
+    Ns = Ns[2],
+    Ni = Ni, 
+    subjIndex = S,
+    itemIndex = IN,
+    beta = rbind( Int, RIF_effect[e] ),
+    sigma_s = sigma_s,
+    sigma_i = sigma_i
+  )
+  
+  for ( nr in 1:nRep ) {
+    
+    if ( nr == 1 ) startTime = Sys.time()
+    
+    # Simulate data
+    sim = genLinModSim( input )
+    
+    grp_mns[1,nr,e] = mean( sim[ IT == 1 & SR == 0 ] )
+    grp_mns[2,nr,e] = mean( sim[ IT == 0 & SR == 0 ] )
+    grp_mns[3,nr,e] = mean( sim[ IT == 1 & SR == 1 ] )
+    grp_mns[4,nr,e] = mean( sim[ IT == 0 & SR == 1 ] )
+    
+    if ( nr == 1 ) {
+      runTime = Sys.time() - startTime
+      print( paste( 'Estimated run time:',
+                    round( (runTime * nRep)/60, 2 ),
+                    'minutes' ) )
+      # Clean up workspace
+      rm( startTime, runTime )
+    }
+    
+  }
+  
+  # Power based on posterior predictive check
+  for ( i in 1:4 ) {
+    ppc_power_analysis[i,e] = 
+      sum( grp_mns[i,,e] > post_pred_check[1,i] & 
+        grp_mns[i,,e] < post_pred_check[2,i] )/nRep
+    MC_error[i,e,] = quick_ui( replicate( 10000, f2(i,e) ) )
+  }
+  
+}
+
+rownames( ppc_power_analysis ) = 
+  colnames( post_pred_check )
+colnames( ppc_power_analysis ) = 
+  c( '4%', '3%', '2%', '1%', '0%' )
+```
+
+Below is a plot of the proportion of times out of a 1,000 iterations that the replication data with 48 subjects would fall within the 95% credible intervals of the original data under different RIF effect sizes:
+
+```{r,echo=FALSE}
+blankPlot( c(.8,5.2), c(0,1) )
+abline(h=0,lwd=2)
+abline(v=.8,lwd=2)
+axis( 1, 1:5, c('4%','3%','2%','1%','0%'),
+      cex.axis = 1.5, tick = F, line = -.5 )
+axis( 2, seq(0,1,.2),
+      cex.axis = 1.5, tick = F, line = -.5 )
+for ( i in seq(.1,1,.1) )
+  segments( .8, i, 5.2, i, lwd = 2, lty = 2, col = 'grey80' )
+mtext( 'Power', side = 2, cex = 1.4, line = 2 )
+mtext( 'RIF effect size', side = 1, cex = 1.4, line = 2 )
+
+clr = c( 'black', 'blue', 'red', 'green' )
+for (i in 1:4) {
+  for ( e in 1:5 ) {
+        arrows( e, MC_error[i,e,1],
+            e, MC_error[i,e,2],
+            code = 3, angle = 90, length = .05,
+            lwd = 2, col = clr[i] )
+  }
+  points( 1:5, ppc_power_analysis[i,], col = clr[i],
+          cex = 1.5, pch = 19 )
+  lines( 1:5, ppc_power_analysis[i,], col = clr[i],
+         lwd = 2 )
+}
+```
+
+We can also display the estimated proportions:
+
+```{r}
+ppc_power_analysis = 
+  as.data.frame( ppc_power_analysis )
+print( ppc_power_analysis )
+```
+
+First, with an effect size of 4% or even 3%, it is highly likely that the replication data will fall within the credible intervals (about 96% of the time for baseline items, and 90% of the time for selective retrieval items). However, as can be seen, this approach has an inflated Type I error rate - even when there is no effect, we will still find a forgetting effect about 15% of the time. In other words, this approach is biased towards replicating the original result.
+
